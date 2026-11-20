@@ -1,0 +1,85 @@
+name: Middleware Lab CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    name: Build, test, and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 11
+        uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: maven
+          cache-dependency-path: middleware-demo/pom.xml
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Run Maven verification
+        run: mvn --batch-mode --no-transfer-progress -f middleware-demo/pom.xml clean verify
+
+      - name: Run Python unit tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Validate Bash syntax
+        run: bash -n scripts/*.sh tests/test_deployment_validation.sh
+
+      - name: Run offline deployment validation
+        run: bash tests/test_deployment_validation.sh
+
+      - name: Validate WAR and create release checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          war="middleware-demo/target/middleware-demo.war"
+          python scripts/validate-war.py "$war"
+          artifact_dir="$RUNNER_TEMP/middleware-artifact"
+          mkdir -p "$artifact_dir"
+          cp -- "$war" "$artifact_dir/middleware-demo.war"
+          (
+            cd "$artifact_dir"
+            sha256sum middleware-demo.war > middleware-demo.war.sha256
+          )
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "commit": os.environ["GITHUB_SHA"],
+              "ref": os.environ["GITHUB_REF"],
+          }
+          Path(os.environ["RUNNER_TEMP"], "middleware-artifact", "build-metadata.json").write_text(
+              json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          echo "WAR SHA-256: $(cut -d ' ' -f 1 "$artifact_dir/middleware-demo.war.sha256")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload immutable WAR artifact and checksum
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: middleware-demo
+          path: ${{ runner.temp }}/middleware-artifact/*
+          if-no-files-found: error
+          retention-days: 21

@@ -1,0 +1,23 @@
+# Maven output
+**/target/
+*.war
+*.class
+
+# Deployment logs and local-only environment config
+/logs/
+/config/*.env
+*.log
+
+# Credentials and middleware client configuration
+*weblogic-user.config
+*weblogic-user.key
+wildfly-config.xml
+*.credential-store
+*.jceks
+*.keystore
+*.truststore
+
+# Python local artifacts
+__pycache__/
+*.py[cod]
+.venv/
