@@ -58,7 +58,6 @@ jobs:
       HEALTH_INTERVAL_SECONDS: '5'
       HEALTH_ATTEMPTS: '12'
       DEPLOY_TIMEOUT_SECONDS: ${{ vars.DEPLOY_TIMEOUT_SECONDS || '600' }}
-      LOG_DIR: ${{ runner.temp }}/middleware-deploy-logs
       WEBLOGIC_ADMIN_URL: ${{ vars.WEBLOGIC_ADMIN_URL }}
       WEBLOGIC_TARGETS: ${{ vars.WEBLOGIC_TARGETS }}
       WEBLOGIC_CLASSPATH: ${{ vars.WEBLOGIC_CLASSPATH }}
@@ -161,6 +160,7 @@ jobs:
           DEPLOY_ACTION: ${{ inputs.action }}
           DRY_RUN: ${{ inputs.dry_run }}
           ARTIFACT_SHA256: ${{ steps.artifact.outputs.sha256 }}
+          LOG_DIR: ${{ runner.temp }}/middleware-deploy-logs
         run: |
           set -euo pipefail
           if [[ "$DEPLOY_ENV" == DEV ]]; then config_file=config/dev.env.example; else config_file=config/test.env.example; fi
@@ -180,6 +180,7 @@ jobs:
           DEPLOY_ACTION: ${{ inputs.action }}
           DRY_RUN: ${{ inputs.dry_run }}
           ARTIFACT_SHA256: ${{ steps.artifact.outputs.sha256 }}
+          LOG_DIR: ${{ runner.temp }}/middleware-deploy-logs
         run: |
           set -euo pipefail
           if [[ "$DEPLOY_ENV" == DEV ]]; then config_file=config/dev.env.example; else config_file=config/test.env.example; fi
