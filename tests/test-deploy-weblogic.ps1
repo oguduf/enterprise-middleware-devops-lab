@@ -168,3 +168,8 @@ finally {
     }
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# GitHub's pwsh shell exits with the last native process code. The negative
+# deployer test intentionally leaves that value nonzero, so clear it only after
+# every assertion and cleanup step has completed successfully.
+$global:LASTEXITCODE = 0
