@@ -8,6 +8,7 @@ These scripts deploy the Phase A WAR to WebLogic 14.1.1 or JBoss EAP 7.4 from a 
 | --- | --- |
 | `scripts/deploy-common.sh` | Parses a restricted `KEY=value` file without evaluating it, validates shared settings, creates private timestamped logs, and wraps external commands. |
 | `scripts/deploy-weblogic.sh` | Validates the WAR and WebLogic connection inputs, calls `weblogic.Deployer`, then runs the health check. |
+| `scripts/deploy-weblogic.ps1` | Windows PowerShell deploy/redeploy/rollback path. Verifies the WAR digest, invokes `weblogic.Deployer`, validates native exit codes and deployment state, and retries application health. |
 | `scripts/deploy-jboss.sh` | Validates JBoss standalone/domain inputs, calls `jboss-cli.sh`, then runs the health check. |
 | `scripts/health-check.py` | Retries the HTTP readiness endpoint with request timeouts and clear attempt output. |
 | `scripts/validate-war.py` | Checks the WAR extension, ZIP structure, CRCs, and presence of `WEB-INF` before deployment or rollback. |
@@ -19,6 +20,8 @@ These scripts deploy the Phase A WAR to WebLogic 14.1.1 or JBoss EAP 7.4 from a 
 | `tests/test_deployment_validation.sh` | Shell tests of configuration failures, command failures, status verification, dry-run, health, and rollback validation using stubs. |
 | `.github/workflows/ci.yml` | Builds/tests the app, checks WAR structure, creates SHA-256 and metadata, and uploads an immutable artifact. |
 | `.github/workflows/deploy-middleware.yml` | Manually triggered deployment/rollback workflow with environment gate, trusted artifact selection, dry-run default, and private runner requirement. |
+| `.github/workflows/deploy-weblogic-windows.yml` | Manual Windows WebLogic workflow: GitHub-hosted artifact/dry-run validation and main-only live deployment on the protected Windows runner. |
+| `tests/test-deploy-weblogic.ps1` | Dependency-free Windows PowerShell tests using a fake Java command; never contacts WebLogic. |
 
 ## Prerequisites
 
@@ -47,7 +50,7 @@ Set `JBOSS_WILDFLY_CONFIG` to a protected Elytron client `wildfly-config.xml` fi
 ## Deployment order
 
 1. CI builds and tests the WAR; it publishes the WAR, checksum, and metadata as a named GitHub artifact. Select the run ID as the deployment's artifact source.
-2. A private Linux self-hosted runner checks out deployment scripts, verifies that the source run succeeded on `main`/`dev` in this repository via push/manual dispatch, checks the named artifact is available, then downloads it and checks its SHA-256 and WAR structure.
+2. The manually dispatched Linux workflow runs from `main` on a private Linux runner; the separate Windows workflow uses GitHub-hosted Windows for offline validation and only routes live actions from `main` to the protected Windows runner. Both verify a successful source CI run on `main` or `dev` in this repository, then download the named artifact and check its SHA-256 and WAR structure.
 3. The deployment workflow uses environment-scoped variables and secrets, downloads credentials only into runner temporary storage with restrictive permissions, and runs in dry-run mode by default. The selected environment must be configured with required approvals and secrets in GitHub settings.
 4. For a live DEV action, set dry-run false. Scripts validate configuration and WAR contents, inspect existing deployment state, invoke the vendor admin interface, verify the resulting deployment state, then poll the health URL.
 5. Review the workflow summary, script log, and server-side status/logs. Promote the same CI run and digest to TEST after its environment approval.
@@ -93,6 +96,12 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 bash tests/test_deployment_validation.sh
 ```
 
+On Windows PowerShell, run the WebLogic-specific offline suite:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-deploy-weblogic.ps1
+```
+
 These tests use a local HTTP server and stub administration commands. They do not need Oracle/JBoss installations and intentionally do not connect to middleware. A live deployment still needs to be verified in an authorized DEV environment with the actual middleware, target, credentials, TLS, and network path.
 
 ## Enterprise CI/CD placement
@@ -104,6 +113,16 @@ CI builds once, tests once, and publishes an immutable WAR plus digest and build
 Create GitHub Environments named exactly `DEV` and `TEST`; configure required reviewers for live deployment where appropriate. Add environment-scoped variables using the names in the workflow: `APP_HEALTH_URL`, `DEPLOY_TIMEOUT_SECONDS`, `WEBLOGIC_ADMIN_URL`, `WEBLOGIC_TARGETS`, `WEBLOGIC_CLASSPATH`, `JBOSS_HOME`, `JBOSS_CONTROLLER`, `JBOSS_MODE`, `JBOSS_SERVER_GROUPS`, and `JBOSS_CLI`. Populate the selected middleware's secret(s): base64-encoded WebLogic user config/key files (`WEBLOGIC_USER_CONFIG_B64`, `WEBLOGIC_USER_KEY_B64`) or the protected Elytron client configuration (`JBOSS_WILDFLY_CONFIG_B64`). Base64 is transport encoding, not encryption; GitHub secret storage and environment access controls protect values, and generated files are mode 600 in runner temp storage.
 
 The deployment runner must be Linux x64, carry labels `self-hosted`, `linux`, `x64`, and `middleware-devops`, have Bash, Python 3, GNU utilities, Java/WebLogic client libraries or JBoss EAP CLI as appropriate, and reach only the approved management and application endpoints. Set `WEBLOGIC_CLASSPATH` and `JBOSS_HOME`/`JBOSS_CLI` to actual installation paths; this repository intentionally does not guess them. A normal GitHub-hosted runner cannot reach a private middleware management network. Workflow actions use pinned major/minor patch tags; keep the runner software current enough for their Node runtime requirements.
+
+### Windows WebLogic workflow
+
+The separate `Manual WebLogic Windows Deployment` workflow uses only `workflow_dispatch` and restricts validation and live jobs to `main`. Its hosted `windows-latest` job verifies the chosen artifact's CI provenance, checksum, WAR structure, and PowerShell dry-run behavior without accessing WebLogic credentials or making a middleware/health request. The live job additionally requires `dry_run=false`, a successful validation job, and the GitHub `DEV` Environment. It routes only to `[self-hosted, windows, x64, middleware-devops]`. This runner should be installed on the WebLogic host because this configuration targets `localhost`.
+
+Install the runner under a dedicated service identity and register the labels above. Configure required reviewers and branch protection on `main`; require the `DEV` Environment gate for live actions. Set the environment variables `WEBLOGIC_USER_CONFIG_FILE` and `WEBLOGIC_USER_KEY_FILE` to the WLST-generated credential files outside the checkout. Keep the encrypted user config and decryption key ACLs restricted to the runner service account, SYSTEM, and administrators. The script rejects files under the repository and ACL entries granting broad access to Everyone, Authenticated Users, or BUILTIN Users. Never pass a WebLogic password as an argument or store one in workflow YAML.
+
+The Windows deployment defaults are the values supplied for this lab: Oracle JDK `C:\Program Files\Java\jdk-11.0.33.1`, `WL_HOME` `C:\Oracle\Middleware\Oracle_Home\wlserver`, Admin URL `t3://localhost:7001`, target `AdminServer`, app `middleware-demo`, and health URL `http://localhost:7001/middleware-demo/health`. It verifies the provided WAR SHA-256, inspects current applications with `weblogic.Deployer -listapps`, uses `-deploy` for first install and `-redeploy` for updates/rollback, checks each native exit code and confirms the application remains listed, then polls health for HTTP 200 and JSON `status=UP`. The user config and key paths are GitHub Environment variables because the files are pre-provisioned on that runner; the credential contents never enter the repository or workflow input.
+
+The workflow uses plain `t3` only for the stated local loopback endpoint. Do not reuse that setting over a network; configure `t3s`, certificate trust, firewall restrictions, and host-specific health URLs if the AdminServer is moved off-host. The runner label controls routing; `weblogic-local-runner` is its display name, not a required label.
 
 The workflow only accepts a selected artifact from a successful push/manual CI run on `main` or `dev` in this same repository. It rejects pull request artifacts, forks, wrong workflows, unsuccessful runs, missing/expired artifacts, checksum mismatch, and malformed WARs. GitHub branch protection and environment approval settings remain repository administration responsibilities. For stronger enterprise provenance, add artifact signing/attestation and verify it against a centrally managed trust policy.
 
