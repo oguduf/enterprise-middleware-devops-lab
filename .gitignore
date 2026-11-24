@@ -21,3 +21,4 @@ wildfly-config.xml
 __pycache__/
 *.py[cod]
 .venv/
+.test-credential-*

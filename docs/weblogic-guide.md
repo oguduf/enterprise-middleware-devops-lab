@@ -14,6 +14,14 @@ The script invokes `weblogic.Deployer` from the WebLogic 14.1.1 client libraries
 
 Use the WebLogic user config and key files supported by the deployer (`-userconfigfile` and `-userkeyfile`). Generate the pair using the approved WLST procedure for the target environment and store it outside source control. Protect both files and make them readable only by the deployment identity. The automation never takes an administrator password as a command-line argument. Grant the identity only the deployment permissions needed for the selected target.
 
+### Windows PowerShell path
+
+`scripts/deploy-weblogic.ps1` is the Windows equivalent for the configured local domain. It uses Oracle JDK 11 at `C:\Program Files\Java\jdk-11.0.33.1` and `WL_HOME` at `C:\Oracle\Middleware\Oracle_Home\wlserver`. Before launching Java, it calls WebLogic's `server\bin\setWLSEnv.cmd` in a temporary command file to obtain the supported client classpath. It invokes `weblogic.Deployer` with `-userconfigfile` and `-userkeyfile`, passes no password on the command line, and rejects credential files under the checkout or files with broad-user ACLs. Oracle's 14.1.1 guide describes `setWLSEnv.cmd` as a way to configure the WebLogic classpath and JDK environment ([Deployer command reference](https://docs.oracle.com/en/middleware/standalone/weblogic-server/14.1.1.0/depgd/wldeployer.html)).
+
+The Windows manual workflow verifies the selected CI run, artifact checksum, and WAR structure on a GitHub-hosted Windows runner first. That hosted job runs the script with `-DryRun`, so it does not connect to WebLogic and does not need credential files. Live execution is only possible from a manual dispatch of `main`, after the `DEV` Environment gate, on the self-hosted labels `[self-hosted, windows, x64, middleware-devops]`. The runner must be on the WebLogic host because the provided Admin URL and health endpoint use `localhost`. Configure the `DEV` Environment variables `WEBLOGIC_USER_CONFIG_FILE` and `WEBLOGIC_USER_KEY_FILE` with paths outside the repository. The runner service identity must be able to read both files; ACLs must exclude Everyone, Authenticated Users, and BUILTIN Users.
+
+The supported operations are `deploy` (only when the app is not already registered), `redeploy` (only for an existing app), and `rollback` (also redeploys the already verified prior WAR). Every operation requires an expected 64-character SHA-256. The workflow verifies provenance and digest, while the script recomputes the digest before taking action. On success, it checks the native process exit code, confirms `middleware-demo` appears in `-listapps`, and retries the configured health endpoint with bounded request timeouts.
+
 ## Deployment lifecycle
 
 ```mermaid
